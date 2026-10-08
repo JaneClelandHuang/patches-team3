@@ -48,3 +48,45 @@ def test_full_solution_is_solved():
         board.place(rect)
     assert board.solved
     assert board.covered_cells() == 49
+
+
+def test_undo_place_leaves_board_empty():
+    board = make_board()
+    board.place(SAMPLE_SOLUTION["drone_1"])
+    assert board.undo() is True
+    assert board.regions == {}
+
+
+def test_undo_restores_regions_replaced_by_overlap():
+    board = make_board()
+    board.place(SAMPLE_SOLUTION["drone_1"])
+    board.place(SAMPLE_SOLUTION["drone_2"])
+    before = dict(board.regions)
+    board.place(Rect(0, 1, 4, 4))  # wipes drone_1's region
+    assert board.undo() is True
+    assert board.regions == before
+
+
+def test_undo_reset_restores_previous_regions():
+    board = make_board()
+    board.place(SAMPLE_SOLUTION["drone_1"])
+    board.place(SAMPLE_SOLUTION["drone_2"])
+    before = dict(board.regions)
+    board.reset()
+    assert board.undo() is True
+    assert board.regions == before
+
+
+def test_undo_on_fresh_board_returns_false():
+    board = make_board()
+    assert board.undo() is False
+    assert board.regions == {}
+
+
+def test_rejected_placement_adds_no_history():
+    board = make_board()
+    board.place(SAMPLE_SOLUTION["drone_1"])
+    assert board.place(Rect(0, 0, 7, 7)) is None
+    assert board.undo() is True
+    assert board.regions == {}
+    assert board.undo() is False
