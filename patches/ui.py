@@ -4,9 +4,11 @@ Controls:
   left-drag     draw a region (corner cell to corner cell)
   right-click   remove the region under the cursor
   r             reset the board
+  h             hint: place one correct region from the solution
 """
 
 import math
+import time
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -14,6 +16,7 @@ from matplotlib.patches import Circle, Rectangle
 
 from .board import Board
 from .rules import Rect
+from .solver import solve
 
 SHAPE_SYMBOLS = {
     "square": "□",
@@ -38,6 +41,12 @@ def draw_drone(ax, drone):
                         edgecolor="black", lw=1.5, zorder=4))
 
 
+def format_time(seconds):
+    """Format a number of seconds as M:SS, e.g. 65 -> "1:05"."""
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}:{secs:02d}"
+
+
 class PatchesApp:
     def __init__(self, puzzle):
         self.puzzle = puzzle
@@ -45,6 +54,7 @@ class PatchesApp:
         self.colors = {d.id: d.color for d in puzzle.drones}
         self.drag_start = None   # (row, col) where the current drag began
         self.preview = None      # Rectangle artist shown while dragging
+        self._solution = None    # cached solve(self.puzzle) result, filled in on first hint
 
         self.fig, self.ax = plt.subplots(figsize=(6, 6.6))
         self.fig.canvas.manager.set_window_title("Patches")
@@ -53,6 +63,14 @@ class PatchesApp:
         self.fig.canvas.mpl_connect("button_release_event", self.on_release)
         self.fig.canvas.mpl_connect("key_press_event", self.on_key)
         self.message = "Drag from corner to corner to draw a region."
+
+        self.clock = time.monotonic  # replaced by a fake clock in tests
+        self.moves = 0
+        self.hints = 0
+        self.start_time = None   # clock() at the first move; None until then
+        self.end_time = None     # clock() when the puzzle was solved
+        self.ticker = self.fig.canvas.new_timer(interval=1000)
+        self.ticker.add_callback(self.on_tick)
         self.redraw()
 
     # ---- coordinates -------------------------------------------------------
@@ -80,6 +98,7 @@ class PatchesApp:
             removed = self.board.remove_at(*cell)
             if removed:
                 self.message = f"Removed {removed}'s region."
+                self.record_move()
             self.redraw()
 
     def on_motion(self, event):
@@ -102,11 +121,14 @@ class PatchesApp:
             self.message = f"Assigned region to {drone_id}."
         else:
             self.message = f"{drone_id}'s region breaks its shape/size rule."
+        if drone_id is not None:
+            self.record_move()
         self.redraw()
 
     def on_key(self, event):
         if event.key == "r":
             self.board.reset()
+            self.reset_stats()
             self.message = "Board reset."
             self.redraw()
         elif event.key == "u":
@@ -115,6 +137,71 @@ class PatchesApp:
             else:
                 self.message = "Nothing to undo."
             self.redraw()
+        elif event.key == "h":
+            if self.board.solved:
+                self.message = "Already solved."
+                self.redraw()
+                return
+            if self._solution is None:
+                self._solution = solve(self.puzzle)
+            if self._solution is None:
+                self.message = "No solution found."
+                self.redraw()
+                return
+            for drone in self.puzzle.drones:
+                rect = self._solution[drone.id]
+                if self.board.regions.get(drone.id) != rect:
+                    self.board.place(rect)
+                    self.message = f"Hint: placed {drone.id}'s region."
+                    self.record_hint()
+                    break
+            self.redraw()
+
+    def on_tick(self):
+        """Called once per second by self.ticker while the timer runs."""
+        if self.drag_start is None:  # redrawing mid-drag would erase the preview
+            self.redraw()
+
+    # ---- moves and timer ---------------------------------------------------
+
+    def record_move(self):
+        """Count one player move. The first move starts the timer."""
+        self.moves += 1
+        self.start_timer()
+
+    def record_hint(self):
+        """Count one hint, separately from moves. A hint also starts the timer."""
+        self.hints += 1
+        self.start_timer()
+
+    def start_timer(self):
+        if self.start_time is None:
+            self.start_time = self.clock()
+            self.ticker.start()
+
+    def stop_timer(self):
+        """Freeze the elapsed time. It stays frozen until reset."""
+        if self.start_time is not None and self.end_time is None:
+            self.end_time = self.clock()
+            self.ticker.stop()
+
+    def reset_stats(self):
+        self.moves = 0
+        self.hints = 0
+        self.start_time = None
+        self.end_time = None
+        self.ticker.stop()
+
+    def elapsed(self):
+        """Seconds since the first move (0 before it), frozen once solved."""
+        if self.start_time is None:
+            return 0
+        end = self.end_time if self.end_time is not None else self.clock()
+        return end - self.start_time
+
+    def stats_text(self):
+        hints = f" · Hints: {self.hints}" if self.hints else ""
+        return f"Moves: {self.moves}{hints} · Time: {format_time(self.elapsed())}"
 
     # ---- drawing -----------------------------------------------------------
 
@@ -160,10 +247,12 @@ class PatchesApp:
         ax.grid(True, color="gray", lw=0.8)
 
         if self.board.solved:
-            status = "SOLVED! Every cell is searched exactly once."
+            self.stop_timer()
+            hints = f" and {self.hints} hints" if self.hints else ""
+            status = f"SOLVED in {format_time(self.elapsed())} with {self.moves} moves{hints}!"
         else:
             status = (f"{len(self.board.regions)}/{len(self.puzzle.drones)} drones assigned, "
-                      f"{self.board.covered_cells()}/{n * n} cells covered")
+                      f"{self.board.covered_cells()}/{n * n} cells covered · {self.stats_text()}")
         ax.set_title(f"{status}\n{self.message}", fontsize=10)
         self.fig.canvas.draw_idle()
 
