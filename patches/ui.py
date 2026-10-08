@@ -4,6 +4,7 @@ Controls:
   left-drag     draw a region (corner cell to corner cell)
   right-click   remove the region under the cursor
   r             reset the board
+  h             hint: place one correct region from the solution
 """
 
 import math
@@ -14,6 +15,7 @@ from matplotlib.patches import Circle, Rectangle
 
 from .board import Board
 from .rules import Rect
+from .solver import solve
 
 SHAPE_SYMBOLS = {
     "square": "□",
@@ -45,6 +47,7 @@ class PatchesApp:
         self.colors = {d.id: d.color for d in puzzle.drones}
         self.drag_start = None   # (row, col) where the current drag began
         self.preview = None      # Rectangle artist shown while dragging
+        self._solution = None    # cached solve(self.puzzle) result, filled in on first hint
 
         self.fig, self.ax = plt.subplots(figsize=(6, 6.6))
         self.fig.canvas.manager.set_window_title("Patches")
@@ -108,6 +111,24 @@ class PatchesApp:
         if event.key == "r":
             self.board.reset()
             self.message = "Board reset."
+            self.redraw()
+        elif event.key == "h":
+            if self.board.solved:
+                self.message = "Already solved."
+                self.redraw()
+                return
+            if self._solution is None:
+                self._solution = solve(self.puzzle)
+            if self._solution is None:
+                self.message = "No solution found."
+                self.redraw()
+                return
+            for drone in self.puzzle.drones:
+                rect = self._solution[drone.id]
+                if self.board.regions.get(drone.id) != rect:
+                    self.board.place(rect)
+                    self.message = f"Hint: placed {drone.id}'s region."
+                    break
             self.redraw()
 
     # ---- drawing -----------------------------------------------------------
