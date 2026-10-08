@@ -113,3 +113,43 @@ def test_timer_stops_when_solved():
     now[0] = 500
     assert app.elapsed() == 70
     assert "SOLVED in 1:10 with 8 moves!" in app.ax.get_title()
+
+
+def press(app, key):
+    app.on_key(SimpleNamespace(key=key))
+
+
+def test_hint_counts_as_hint_not_move():
+    app = make_app()
+    press(app, "h")
+    assert app.moves == 0
+    assert app.hints == 1
+    assert "Moves: 0 · Hints: 1" in app.stats_text()
+
+
+def test_hints_hidden_until_used():
+    app = make_app()
+    assert "Hints" not in app.stats_text()
+
+
+def test_hint_starts_the_timer():
+    app = make_app()
+    now = [100]
+    app.clock = lambda: now[0]
+    press(app, "h")
+    now[0] = 130
+    assert app.elapsed() == 30
+
+
+def test_solving_with_hints_shows_hint_count():
+    app = make_app()
+    for _ in PROBLEM1_SOLUTION:
+        press(app, "h")
+    assert "with 0 moves and 8 hints!" in app.ax.get_title()
+
+
+def test_reset_sets_hints_back_to_zero():
+    app = make_app()
+    press(app, "h")
+    press(app, "r")
+    assert app.hints == 0
