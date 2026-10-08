@@ -4,6 +4,7 @@ Controls:
   left-drag     draw a region (corner cell to corner cell)
   right-click   remove the region under the cursor
   r             reset the board
+  h             hint: place one correct region from the solution
 """
 
 import math
@@ -15,6 +16,7 @@ from matplotlib.patches import Circle, Rectangle
 
 from .board import Board
 from .rules import Rect
+from .solver import solve
 
 SHAPE_SYMBOLS = {
     "square": "□",
@@ -52,6 +54,7 @@ class PatchesApp:
         self.colors = {d.id: d.color for d in puzzle.drones}
         self.drag_start = None   # (row, col) where the current drag began
         self.preview = None      # Rectangle artist shown while dragging
+        self._solution = None    # cached solve(self.puzzle) result, filled in on first hint
 
         self.fig, self.ax = plt.subplots(figsize=(6, 6.6))
         self.fig.canvas.manager.set_window_title("Patches")
@@ -63,6 +66,7 @@ class PatchesApp:
 
         self.clock = time.monotonic  # replaced by a fake clock in tests
         self.moves = 0
+        self.hints = 0
         self.start_time = None   # clock() at the first move; None until then
         self.end_time = None     # clock() when the puzzle was solved
         self.ticker = self.fig.canvas.new_timer(interval=1000)
@@ -127,6 +131,25 @@ class PatchesApp:
             self.reset_stats()
             self.message = "Board reset."
             self.redraw()
+        elif event.key == "h":
+            if self.board.solved:
+                self.message = "Already solved."
+                self.redraw()
+                return
+            if self._solution is None:
+                self._solution = solve(self.puzzle)
+            if self._solution is None:
+                self.message = "No solution found."
+                self.redraw()
+                return
+            for drone in self.puzzle.drones:
+                rect = self._solution[drone.id]
+                if self.board.regions.get(drone.id) != rect:
+                    self.board.place(rect)
+                    self.message = f"Hint: placed {drone.id}'s region."
+                    self.record_hint()
+                    break
+            self.redraw()
 
     def on_tick(self):
         """Called once per second by self.ticker while the timer runs."""
@@ -138,6 +161,14 @@ class PatchesApp:
     def record_move(self):
         """Count one player move. The first move starts the timer."""
         self.moves += 1
+        self.start_timer()
+
+    def record_hint(self):
+        """Count one hint, separately from moves. A hint also starts the timer."""
+        self.hints += 1
+        self.start_timer()
+
+    def start_timer(self):
         if self.start_time is None:
             self.start_time = self.clock()
             self.ticker.start()
@@ -150,6 +181,7 @@ class PatchesApp:
 
     def reset_stats(self):
         self.moves = 0
+        self.hints = 0
         self.start_time = None
         self.end_time = None
         self.ticker.stop()
@@ -162,7 +194,8 @@ class PatchesApp:
         return end - self.start_time
 
     def stats_text(self):
-        return f"Moves: {self.moves} · Time: {format_time(self.elapsed())}"
+        hints = f" · Hints: {self.hints}" if self.hints else ""
+        return f"Moves: {self.moves}{hints} · Time: {format_time(self.elapsed())}"
 
     # ---- drawing -----------------------------------------------------------
 
@@ -209,7 +242,8 @@ class PatchesApp:
 
         if self.board.solved:
             self.stop_timer()
-            status = f"SOLVED in {format_time(self.elapsed())} with {self.moves} moves!"
+            hints = f" and {self.hints} hints" if self.hints else ""
+            status = f"SOLVED in {format_time(self.elapsed())} with {self.moves} moves{hints}!"
         else:
             status = (f"{len(self.board.regions)}/{len(self.puzzle.drones)} drones assigned, "
                       f"{self.board.covered_cells()}/{n * n} cells covered · {self.stats_text()}")
