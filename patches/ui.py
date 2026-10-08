@@ -7,6 +7,7 @@ Controls:
 """
 
 import math
+import time
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -38,6 +39,12 @@ def draw_drone(ax, drone):
                         edgecolor="black", lw=1.5, zorder=4))
 
 
+def format_time(seconds):
+    """Format a number of seconds as M:SS, e.g. 65 -> "1:05"."""
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}:{secs:02d}"
+
+
 class PatchesApp:
     def __init__(self, puzzle):
         self.puzzle = puzzle
@@ -53,6 +60,13 @@ class PatchesApp:
         self.fig.canvas.mpl_connect("button_release_event", self.on_release)
         self.fig.canvas.mpl_connect("key_press_event", self.on_key)
         self.message = "Drag from corner to corner to draw a region."
+
+        self.clock = time.monotonic  # replaced by a fake clock in tests
+        self.moves = 0
+        self.start_time = None   # clock() at the first move; None until then
+        self.end_time = None     # clock() when the puzzle was solved
+        self.ticker = self.fig.canvas.new_timer(interval=1000)
+        self.ticker.add_callback(self.on_tick)
         self.redraw()
 
     # ---- coordinates -------------------------------------------------------
@@ -80,6 +94,7 @@ class PatchesApp:
             removed = self.board.remove_at(*cell)
             if removed:
                 self.message = f"Removed {removed}'s region."
+                self.record_move()
             self.redraw()
 
     def on_motion(self, event):
@@ -102,13 +117,52 @@ class PatchesApp:
             self.message = f"Assigned region to {drone_id}."
         else:
             self.message = f"{drone_id}'s region breaks its shape/size rule."
+        if drone_id is not None:
+            self.record_move()
         self.redraw()
 
     def on_key(self, event):
         if event.key == "r":
             self.board.reset()
+            self.reset_stats()
             self.message = "Board reset."
             self.redraw()
+
+    def on_tick(self):
+        """Called once per second by self.ticker while the timer runs."""
+        if self.drag_start is None:  # redrawing mid-drag would erase the preview
+            self.redraw()
+
+    # ---- moves and timer ---------------------------------------------------
+
+    def record_move(self):
+        """Count one player move. The first move starts the timer."""
+        self.moves += 1
+        if self.start_time is None:
+            self.start_time = self.clock()
+            self.ticker.start()
+
+    def stop_timer(self):
+        """Freeze the elapsed time. It stays frozen until reset."""
+        if self.start_time is not None and self.end_time is None:
+            self.end_time = self.clock()
+            self.ticker.stop()
+
+    def reset_stats(self):
+        self.moves = 0
+        self.start_time = None
+        self.end_time = None
+        self.ticker.stop()
+
+    def elapsed(self):
+        """Seconds since the first move (0 before it), frozen once solved."""
+        if self.start_time is None:
+            return 0
+        end = self.end_time if self.end_time is not None else self.clock()
+        return end - self.start_time
+
+    def stats_text(self):
+        return f"Moves: {self.moves} · Time: {format_time(self.elapsed())}"
 
     # ---- drawing -----------------------------------------------------------
 
@@ -154,10 +208,11 @@ class PatchesApp:
         ax.grid(True, color="gray", lw=0.8)
 
         if self.board.solved:
-            status = "SOLVED! Every cell is searched exactly once."
+            self.stop_timer()
+            status = f"SOLVED in {format_time(self.elapsed())} with {self.moves} moves!"
         else:
             status = (f"{len(self.board.regions)}/{len(self.puzzle.drones)} drones assigned, "
-                      f"{self.board.covered_cells()}/{n * n} cells covered")
+                      f"{self.board.covered_cells()}/{n * n} cells covered · {self.stats_text()}")
         ax.set_title(f"{status}\n{self.message}", fontsize=10)
         self.fig.canvas.draw_idle()
 
