@@ -109,6 +109,12 @@ class PatchesApp:
             self.board.reset()
             self.message = "Board reset."
             self.redraw()
+        elif event.key == "u":
+            if self.board.undo():
+                self.message = "Undid last move."
+            else:
+                self.message = "Nothing to undo."
+            self.redraw()
 
     # ---- drawing -----------------------------------------------------------
 
